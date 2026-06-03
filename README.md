@@ -238,3 +238,101 @@ La evaluación de esta primera arquitectura mejorada confirma que el modelo ha a
 * **Poder Predictivo Real y Consistencia (Test Set):** El indicador más sólido de la estabilidad del modelo es su desempeño sobre el conjunto ciego de pruebas (Test Set):
   * El Test MAE se sitúa en **0.6177**, mostrando un acoplamiento casi perfecto con el Train MAE (**0.6104**).
   * La mínima diferencia numérica entre los tres entornos (Train, Validation y Test) ratifica que las fronteras de decisión de la red se mantienen estables ante datos completamente desconocidos.
+
+# Modelo Mejorado (Escalamiennto en Features y modificaión de arquitectura)
+
+### Cambios Implementados:
+
+1. **Preprocesamiento Avanzado (Quantile Scaler):**
+* *Justificación:* Se sustituyó el escalado lineal tradicional por un `QuantileTransformer` en algunos features. Esta transformación no lineal mapea las variables numéricas hacia una distribución uniforme o normal, reduciendo a cero el impacto de los valores atípicos (*outliers*) presentes en las métricas de hábitos digitales y de sueño de los estudiantes, garantizando un pipeline robusto.
+
+
+2. **Activación Swish y Regularización Estructural (Dropout):**
+* *Justificación:* Se reemplazó la función de activación ReLU por `Swish` para permitir un flujo de gradientes más suave a lo largo de las capas densas. Asimismo, para romper la co-adaptación de pesos que inducía la memorización de los datos, se integraron capas de `Dropout(0.3)` de manera estructural tras cada transformación oculta.
+
+
+4. **Control de Tasa de Aprendizaje Dinámica (ReduceLROnPlateau):**
+* *Justificación:* Se incorporó un callback dinámico configurado con `patience=5` y un `factor=0.2` enfocado en monitorear `val_mae`. Esto permite realizar microajustes de precisión quirúrgica sobre la tasa de aprendizaje cuando el error de validación entra en una meseta, evitando que las actualizaciones reboten en el mínimo local.
+
+
+
+### Arquitectura Optimizada:
+
+```text
+12 Variables de Entrada Cuantílicas
+                 ↓
+   Dense (64 neuronas, Swish)   → Dropout(0.3)
+                 ↓
+   Dense (32 neuronas, Swish)   → Dropout(0.3)
+                 ↓
+    Dense (1 neurona, Lineal)  
+
+```
+
+---
+
+# Resultados y Evaluación del Modelo Mejorado
+
+Los resultados obtenidos tras aplicar esta metodología del estado del arte muestran un cambio positivo en la estabilidad del aprendizaje y las métricas globales del regresor.
+
+## Tabla Comparativa de Rendimiento (Iteración 3)
+
+|  | Métrica | Train | Validation | Test |
+| --- | --- | --- | --- | --- |
+| 0 | MSE (Loss) | 0.4640 | 0.3669 | 0.3580 |
+| 1 | MAE | 0.5684 | 0.5240 | 0.5090 |
+| 2 | RMSE | 0.6811 | 0.6057 | 0.5983 |
+
+## Análisis Visual de Curvas de Aprendizaje (Modelo Regularizado)
+
+A continuación, se presentan los marcadores para las nuevas gráficas de rendimiento generadas por el entrenamiento controlado:
+
+### 1. Evolución del Error Cuadrático Medio (Loss - MSE)
+![Loss](image-6.png)
+
+### 2. Evolución del Error Absoluto Medio (MAE)
+![MAE](image-7.png)
+
+### 3. Evolución de la Raíz del Error Cuadrático Medio (RMSE)
+![RMSE](image-8.png)
+
+---
+
+## Análisis Final de Resultados: Evaluación de la Segunda Versión de Mejora
+
+La evaluación cuantitativa y cualitativa de esta arquitectura mejorada confirma que el modelo ha alcanzado un comportamiento de aprendizaje mejor:
+* **Convergencia Saludable por Regularización:** Un comportamiento clave y sumamente positivo en esta configuración es que el error en los conjuntos de Validación y de Pruebas es ligeramente inferior al de Entrenamiento (Validation MAE de **0.5240** y Test MAE de **0.5090** vs. Train MAE de **0.5684**). Esto valida la efectividad del Dropout (0.3) y AdamW; al actuar como penalizaciones en la fase de entrenamiento, previenen la memorización sistemática. Durante la evaluación, al desactivarse el Dropout de forma nativa, la red explota la totalidad de sus conexiones optimizadas para entregar predicciones altamente competitivas.
+* **Progresión de Capacidad Eficiente:** Reducir la topología hacia un embudo más compacto y selectivo (`64 → 32 → 1`) combinado con la suavidad matemática de la activación `Swish` forzó a la red neuronal a sintetizar de manera limpia la varianza de las 12 características de entrada, eliminando el ruido residual que causaban las estructuras sobredimensionadas.
+* **Poder Predictivo Real y Consistencia (Test Set):** La métrica definitiva de estabilidad se observa en el conjunto ciego de pruebas. El Test MAE se asienta firmemente en **0.5090**, reduciendo drásticamente la barrera del baseline anterior (el cual se encontraba estancado en un error de **0.6177**). La cercanía simétrica de las métricas entre los tres entornos (Train, Validation y Test) ratifica que las fronteras de regresión del modelo son estables, predecibles ante datos completamente nuevos y metodológicamente sólidas.
+## Comparativa de Modelos
+
+Para visualizar claramente el impacto de las técnicas de regularización y la optimización de la arquitectura, a continuación se presenta una comparativa directa del rendimiento sobre el **Conjunto de Prueba (Test Set)** a lo largo de las tres iteraciones:
+
+| Versión del Modelo | Descripción de la Arquitectura | Test MSE | Test MAE | Test RMSE | Diagnóstico Principal |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Iteración 1** | MLP Base (256 → 128 → 64), Adam, ReLU | 0.4321 | 0.5374 | 0.6574 | Overfitting severo (Memorización) |
+| **Iteración 2** | MLP Cónico (128 → 64 → 32), AdamW, Dropout, Early Stopping | 0.5795 | 0.6177 | 0.7612 | Overfitting mitigado, pero subóptimo |
+| **Iteración 3** | MLP Compacto (64 → 32), AdamW, Swish, Quantile Scaler, ReduceLROnPlateau | **0.3580** | **0.5090** | **0.5983** | **Mejor generalización y estabilidad** |
+
+**Conclusión del escalamiento:** La Iteración 3 logró reducir el Error Absoluto Medio (MAE) en datos ciegos a **0.5090**, demostrando que un modelo más compacto con transformaciones no lineales (Quantile Scaler y Swish) extrae mejor la señal real frente al ruido inherente de los datos tabulares.
+
+## Visualización de Impacto: Predicciones vs. Valores Reales
+
+Para entender el comportamiento de regresión de la Iteración 3 en el mundo real, se have una tabla con los datos reales y lo qu epredice el modelo. 
+
+### Muestra Aleatoria de Resultados
+
+| Estudiante (ID Prueba) | GPA Real (Label) | GPA Predicho | Diferencia Absoluta (Error) |
+| :---: | :---: | :---: | :---: |
+| #42 | 2.06 | 2.995 | 0.935 |
+| #105 | 3 | 3.075 | 0.075 |
+| #210 | 2.62 | 2.985 | 0.365 |
+| #826 | 3.16 | 3.053 | 0.107 |
+*
+
+## Referencias y Sustento Teórico
+
+El diseño de la arquitectura, la selección de hiperparámetros y el marco de evaluación de este proyecto se fundamentan en la siguiente literatura técnica:
+
+1. **Estado del Arte en Datos Tabulares:**
+   * Gorishniy, Y., Rubachev, I., Khrulkov, V., & Babenko, A. (2021). *Revisiting Deep Learning Models for Tabular Data.* NeurIPS. (Justificación del uso de arquitecturas MLP optimizadas y Dropout sobre datos tabulares).
