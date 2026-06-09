@@ -178,7 +178,7 @@ El análisis integral de la tabla de resultados y las curvas de aprendizaje evid
 
 ---
 
-# Modelo Mejorado (Iteración 2: Implementación del Estado del Arte)
+# Modelo Mejorado (Iteración 2)
 
 Para mitigar el sobreajuste severo diagnosticado en el modelo base y cumplir estrictamente con las directrices de regularización para datos tabulares estipuladas por **Gorishniy et al. (2021)**, se implementó una segunda iteración del modelo con modificaciones críticas en el preprocesamiento, la arquitectura y los hiperparámetros.
 
@@ -239,7 +239,7 @@ La evaluación de esta primera arquitectura mejorada confirma que el modelo ha a
   * El Test MAE se sitúa en **0.6177**, mostrando un acoplamiento casi perfecto con el Train MAE (**0.6104**).
   * La mínima diferencia numérica entre los tres entornos (Train, Validation y Test) ratifica que las fronteras de decisión de la red se mantienen estables ante datos completamente desconocidos.
 
-# Modelo Mejorado (Escalamiennto en Features y modificaión de arquitectura)
+# Modelo Mejorado (Iteración 3: Escalamiento en Features y modificación de arquitectura)
 
 ### Cambios Implementados:
 
@@ -318,7 +318,7 @@ Para visualizar claramente el impacto de las técnicas de regularización y la o
 
 ## Visualización de Impacto: Predicciones vs. Valores Reales
 
-Para entender el comportamiento de regresión de la Iteración 3 en el mundo real, se have una tabla con los datos reales y lo qu epredice el modelo. 
+Para entender el comportamiento de regresión de la Iteración 3 en el mundo real, se have una tabla con los datos reales y lo que predice el modelo. 
 
 ### Muestra Aleatoria de Resultados
 
@@ -328,6 +328,96 @@ Para entender el comportamiento de regresión de la Iteración 3 en el mundo rea
 | #105 | 3 | 3.075 | 0.075 |
 | #210 | 2.62 | 2.985 | 0.365 |
 | #826 | 3.16 | 3.053 | 0.107 |
+
+
+# Modelo Final (Iteración 4: Feature Engineering y XGBoost)
+
+A pesar de los buenos resultados logrados con la Iteración 3 (MLP Compacto), las arquitecturas de Deep Learning suelen requerir grandes volúmenes de datos para extraer todo su potencial. Para intentar romper la barrera del error (MAE) de 0.50 en un dataset tabular de tan solo 1,200 registros, se replanteó el enfoque utilizando **Gradient Boosting**, específicamente mediante el algoritmo **XGBoost (eXtreme Gradient Boosting)**.
+
+## Ingeniería de Características (Feature Engineering)
+
+El principal cambio en esta iteración fue dejar de depender exclusivamente de las características en su estado puro y comenzar a cruzar información para revelar patrones sobre el comportamiento de los adolescentes.
+
+Se crearon **4 nuevas características** en la fase de preprocesamiento (implementado en `data_cleaning.ipynb`):
+
+1. **`total_digital_load`**: Representa la carga digital total diaria (`daily_social_media_hours` + `screen_time_before_sleep`).
+2. **`sleep_quality_ratio`**: Proporción matemática entre las horas de descanso y la exposición a pantallas antes de dormir (`sleep_hours` / `screen_time_before_sleep` + 1). Permite al modelo penalizar altos niveles de pantalla nocturna.
+3. **`mental_health_risk`**: Un índice compuesto que suma las escalas psicométricas adversas (`stress_level` + `anxiety_level` + `addiction_level`).
+4. **`lifestyle_balance`**: Un ratio entre los hábitos positivos (actividad física e interacción social) versus el consumo digital (`physical_activity` + `social_interaction_level` / `daily_social_media_hours` + 1).
+
+Con esta ingeniería, el espacio dimensional de entrada pasó a tener **16 features**.
+## Estrategia de Validación: K-Fold Cross-Validation
+
+En las iteraciones previas del proyecto, se utilizó una división estática donde se extraía un 15% fijo del conjunto de entrenamiento para el monitoreo de la validación interna. Sin embargo, dado que el volumen de datos disponible para el entrenamiento es acotado (816 registros), depender de una única división aleatoria introduce el riesgo de una alta varianza: las métricas de rendimiento podrían fluctuar drásticamente dependiendo de qué perfiles específicos de estudiantes queden asignados a ese bloque de validación.
+
+Para mitigar este problema y asegurar una selección de hiperparámetros completamente imparcial en la **Iteración 4**, se implementó una estrategia de **Validación Cruzada de K-Folds (K-Fold Cross-Validation)**.
+
+### Mecanismo de Funcionamiento y Selección de `arboles_promedio`
+
+1. **Partición del Dataset**: El conjunto completo de entrenamiento (816 instancias) se divide matemáticamente en $K$ subconjuntos (o *folds*) mutuamente excluyentes y de tamaño equivalente.
+2. **Entrenamiento Cíclico**: El proceso ejecuta $K$ iteraciones independientes de entrenamiento. En cada ciclo $i$, el fold $i$ se reserva exclusivamente como el conjunto de validación interna, mientras que los $K-1$ folds restantes se fusionan para conformar el conjunto de entrenamiento activo.
+3. **Monitoreo con Early Stopping**: En cada una de las $K$ ejecuciones, se entrena un regresor de XGBoost permitiendo un límite amplio de estimadores. El fold de validación de ese ciclo se utiliza para activar la detención temprana si la métrica de pérdida deja de mejorar, registrando el número exacto de árboles donde el modelo alcanzó su punto óptimo de generalización.
+4. **Cálculo de `arboles_promedio`**: Una vez concluidos los $K$ ciclos, se calcula la media aritmética de la cantidad de árboles óptimos encontrados en cada iteración. Este valor resultante se define como el parámetro final fijo (`n_estimators=arboles_promedio`) con el cual se entrena el modelo definitivo antes de evaluar el test ciego.
+
+## Selección del Modelo: ¿Por qué XGBoost?
+
+Para datos tabulares estructurados (y particularmente en datasets pequeños o medianos), los modelos basados en ensambles de árboles de decisión suelen superar a las Redes Neuronales Profundas. XGBoost se seleccionó por su capacidad nativa para manejar relaciones no lineales, su robustez ante el ruido y su eficiencia manejando las nuevas características sin sufrir el nivel de overfitting que presenta un MLP.
+
+### Hiperparámetros Optimizados
+
+El modelo fue configurado priorizando la mitigación de la varianza:
+
+```python
+modelo_final = xgb.XGBRegressor(
+   n_estimators=arboles_promedio, # Número óptimo definido por validación cruzada
+   max_depth=4,                   # Árboles poco profundos para no memorizar el ruido
+   learning_rate=0.03,            # Tasa de aprendizaje conservadora
+   subsample=0.8,                 # Uso del 80% de instancias por árbol (Bagging)
+   colsample_bytree=0.8,          # Uso del 80% de características por árbol
+   reg_lambda=3,                  # Regularización L2 (Ridge) moderada-alta
+   random_state=42
+)
+
+```
+
+---
+
+## Resultados y Evaluación del Modelo XGBoost
+
+La implementación de XGBoost junto con la ingeniería de características logró el mejor desempeño de todo el proyecto, superando la barrera técnica del 0.50 de MAE en datos nunca antes vistos.
+
+### Métricas Finales (Test Ciego)
+
+* **Test MSE (Loss):** 0.3268
+* **Test MAE:** 0.4864
+* **Test RMSE:** 0.5717
+
+La mejora se debe principalmente a dos factores: la capacidad de XGBoost para segmentar las interacciones complejas a través de sus árboles, y la creación de la variable `lifestyle_balance` y `sleep_quality_ratio`, que le entregaron al modelo la "lógica humana" ya digerida en lugar de forzarlo a descubrirla desde cero.
+
+---
+
+## Análisis: El Límite del Error y Sesgos del Dataset
+
+Aunque un Error Absoluto Medio (MAE) de ~0.48 en una escala de GPA es un resultado predictivo sumamente sólido para el contexto de este proyecto, existe un límite matemático y metodológico que impidió reducir el error hacia valores cercanos a cero. Esto se explica mediante un análisis crítico de la naturaleza del dataset:
+
+1. **Ausencia de Predictores Determinantes:** El GPA es una métrica puramente académica. Nuestro dataset intenta predecirlo utilizando variables periféricas (salud mental, sueño, redes sociales). El modelo carece de las variables más importantes en el mundo real, tales como: *horas de estudio semanales, ingresos familiares, escolaridad previa o nivel socioeconómico*. Al faltar estas variables clave, el modelo se enfrenta a un error irreducible.
+2. **Subjetividad y Sesgo de Autoreporte:** Gran parte del dataset se basa en escalas psicométricas (`stress_level`, `anxiety_level`) e interacciones sociales (`social_interaction_level`) que probablemente fueron obtenidas mediante encuestas. Esto introduce un fuerte "sesgo de autoreporte"; la percepción que tiene un adolescente de su propio estrés es subjetiva y no está clínicamente calibrada, generando un ruido inherente en las etiquetas.
+3. **Limitación de Volumen:** Con solo 1,200 registros en total (apenas ~800 para entrenar), los algoritmos de machine learning no tienen la densidad de datos suficiente para generalizar patrones universales infalibles.
+
+En conclusión, el error residual del modelo es un reflejo de la incertidumbre y la complejidad del comportamiento humano capturado en un dataset limitado.
+
+---
+
+## Comparativa Histórica de Modelos (Actualizada)
+
+Tabla final que resume la evolución y el impacto de las técnicas aplicadas durante el ciclo de vida del proyecto sobre el **Conjunto de Prueba (Test Set)**:
+
+| Versión del Modelo | Descripción / Arquitectura | Test MSE | Test MAE | Test RMSE | Diagnóstico Principal |
+| --- | --- | --- | --- | --- | --- |
+| **Iteración 1** | MLP Base (256 → 128 → 64), Adam, ReLU | 0.4321 | 0.5374 | 0.6574 | Overfitting severo (Memorización) |
+| **Iteración 2** | MLP Cónico (128 → 64 → 32), AdamW, Dropout | 0.5795 | 0.6177 | 0.7612 | Overfitting mitigado, pero subóptimo |
+| **Iteración 3** | MLP Compacto (64 → 32), Quantile Scaler, Swish | 0.3580 | 0.5090 | 0.5983 | Mejor generalización en DL |
+| **Iteración 4** | **Feature Engineering (16 vars) + XGBoost Regressor** | **0.3268** | **0.4864** | **0.5717** | **Mejor rendimiento global (Estado del Arte Tabular)** |
 *
 
 ## Referencias y Sustento Teórico
